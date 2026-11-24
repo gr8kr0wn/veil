@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 
 export default function Home() {
+  const { publicKey } = useWallet();
   const [activeTab, setActiveTab] = useState<"dashboard" | "send" | "treasury" | "transactions" | "settings">("dashboard");
   const [sendMode, setSendMode] = useState<"single" | "batch" | "payroll">("single");
 
