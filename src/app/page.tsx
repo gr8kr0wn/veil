@@ -1,167 +1,228 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 
 export default function Home() {
-  const { publicKey } = useWallet();
+  const { publicKey, connected } = useWallet();
   const [activeTab, setActiveTab] = useState<"dashboard" | "send" | "treasury" | "transactions" | "settings">("dashboard");
   const [sendMode, setSendMode] = useState<"single" | "batch" | "payroll">("single");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const navItems = [
+    { id: "dashboard" as const, label: "Dashboard", icon: "▦" },
+    { id: "send" as const, label: "Send", icon: "➤" },
+    { id: "treasury" as const, label: "Treasury", icon: "▣" },
+    { id: "transactions" as const, label: "Transactions", icon: "⇄" },
+    { id: "settings" as const, label: "Settings", icon: "⚙" },
+  ];
 
   return (
     <div className="min-h-screen bg-black text-white">
       {/* Top Nav */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-900">
+      <header className="sticky top-0 z-40 flex items-center justify-between px-4 py-3 border-b border-zinc-900 bg-black/90 backdrop-blur">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-gradient-to-br from-yellow-600 to-yellow-400 rounded-lg flex items-center justify-center font-bold text-black">V</div>
-          <div>
-            <div className="font-semibold tracking-wide">VEIL</div>
-            <div className="text-xs text-zinc-500">Private Finance. Onchain.</div>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="md:hidden p-1.5 rounded-lg hover:bg-zinc-900"
+            aria-label="Toggle menu"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <div className="w-8 h-8 bg-gradient-to-br from-yellow-600 to-yellow-400 rounded-lg flex items-center justify-center font-bold text-black text-sm">V</div>
+          <div className="hidden sm:block">
+            <div className="font-semibold tracking-wide text-sm">VEIL</div>
+            <div className="text-[10px] text-zinc-500">Private Finance. Onchain.</div>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="px-3 py-1.5 rounded-full bg-zinc-900 text-xs flex items-center gap-1.5 border border-yellow-900/40">
+        <div className="flex items-center gap-2">
+          <div className="px-2.5 py-1 rounded-full bg-zinc-900 text-[10px] flex items-center gap-1.5 border border-yellow-900/40">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
             Devnet
           </div>
           {publicKey && (
-            <span className="text-xs text-zinc-500 hidden md:block">
+            <span className="text-[10px] text-zinc-500 hidden sm:block">
               {publicKey.toBase58().slice(0, 4)}…{publicKey.toBase58().slice(-4)}
             </span>
           )}
-          <WalletMultiButton className="!bg-yellow-500 !text-black !rounded-full !font-medium !text-sm hover:!bg-yellow-400" />
+          <WalletMultiButton className="!bg-yellow-500 !text-black !rounded-full !font-medium !text-xs !px-3 !py-1.5 hover:!bg-yellow-400" />
         </div>
       </header>
 
       <div className="flex">
-        {/* Sidebar */}
-        <aside className="w-56 border-r border-zinc-900 min-h-[calc(100vh-73px)] p-4 space-y-1">
-          {[
-            { id: "dashboard", label: "Dashboard", icon: "▦" },
-            { id: "send", label: "Send", icon: "➤" },
-            { id: "treasury", label: "Treasury", icon: "▣" },
-            { id: "transactions", label: "Transactions", icon: "⇄" },
-            { id: "settings", label: "Settings", icon: "⚙" },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id as any)}
-              className={`w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-3 text-sm transition ${
-                activeTab === item.id
-                  ? "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-900"
-              }`}
-            >
-              <span>{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
-
-          <div className="mt-8 p-3 rounded-xl border border-yellow-900/30 bg-zinc-950 text-xs">
-            <div className="flex items-center gap-2 text-yellow-500 mb-1">
-              <span>🛡</span> Powered by Helius Privacy Rings
+        {/* Sidebar - desktop */}
+        <aside className="hidden md:flex w-56 border-r border-zinc-900 min-h-[calc(100vh-57px)] p-4 flex-col">
+          <nav className="space-y-1">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-3 text-sm transition ${
+                  activeTab === item.id
+                    ? "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
+                    : "text-zinc-400 hover:bg-zinc-900"
+                }`}
+              >
+                <span className="text-base">{item.icon}</span>
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="mt-auto pt-6 text-xs text-zinc-600">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-yellow-500">🛡</span>
+              Powered by Helius
             </div>
-            <div className="text-zinc-500">Encrypt. Transact. Verify.</div>
+            <div>Privacy Rings</div>
+            <div className="text-[10px] mt-1">Encrypt. Transact. Verify.</div>
           </div>
         </aside>
 
-        {/* Main Content */}
-        <main className="flex-1 p-6">
-          {activeTab === "dashboard" && <DashboardView />}
-          {activeTab === "send" && (
-            <SendView mode={sendMode} setMode={setSendMode} />
-          )}
+        {/* Mobile sidebar overlay */}
+        {sidebarOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
+            <aside className="absolute left-0 top-0 bottom-0 w-64 bg-zinc-950 border-r border-zinc-800 p-4 flex flex-col">
+              <div className="flex items-center justify-between mb-6">
+                <span className="font-semibold">Menu</span>
+                <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-zinc-900 rounded">✕</button>
+              </div>
+              <nav className="space-y-1">
+                {navItems.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setSidebarOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 text-sm ${
+                      activeTab === item.id
+                        ? "bg-yellow-500/10 text-yellow-400"
+                        : "text-zinc-400"
+                    }`}
+                  >
+                    <span>{item.icon}</span>
+                    {item.label}
+                  </button>
+                ))}
+              </nav>
+            </aside>
+          </div>
+        )}
+
+        {/* Main content */}
+        <main className="flex-1 min-w-0 p-4 md:p-8">
+          {activeTab === "dashboard" && <DashboardView connected={connected} publicKey={publicKey} />}
+          {activeTab === "send" && <SendView mode={sendMode} setMode={setSendMode} />}
           {activeTab === "treasury" && <TreasuryView />}
           {activeTab === "transactions" && <TransactionsView />}
           {activeTab === "settings" && <SettingsView />}
         </main>
       </div>
+
+      {/* Mobile bottom nav */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800 flex justify-around py-2 z-40">
+        {navItems.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => setActiveTab(item.id)}
+            className={`flex flex-col items-center gap-0.5 px-2 py-1 text-[10px] ${
+              activeTab === item.id ? "text-yellow-400" : "text-zinc-500"
+            }`}
+          >
+            <span className="text-lg">{item.icon}</span>
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      <div className="md:hidden h-16" />
     </div>
   );
 }
 
-function DashboardView() {
+function DashboardView({ connected, publicKey }: { connected: boolean; publicKey: any }) {
   return (
-    <div className="space-y-6">
+    <div className="max-w-4xl">
       {/* Hero */}
-      <div className="relative rounded-3xl overflow-hidden border border-zinc-800 bg-zinc-950">
-        <div className="absolute inset-0">
-          <Image
-            src="/hero-ring.jpg"
-            alt="VEIL ring"
-            fill
-            className="object-cover opacity-60"
-            priority
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 to-transparent" />
-        </div>
-        <div className="relative p-10 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs mb-6">
-            🔒 Helius Privacy Rings
+      <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-zinc-950 to-black border border-zinc-800 p-6 md:p-10 mb-6">
+        <div className="absolute inset-0 bg-[url('/hero-ring.jpg')] bg-cover bg-center opacity-20" />
+        <div className="relative">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-400 mb-4">
+            <span>🔒</span> Helius Privacy Rings
           </div>
-          <h1 className="text-5xl font-bold leading-tight mb-4">
-            Your Business Finances Shouldn’t Be <span className="text-yellow-400">Public.</span>
+          <h1 className="text-3xl md:text-5xl font-bold leading-tight mb-3">
+            Your Business<br />Finances<br className="md:hidden" /> Shouldn’t<br />Be Public.
           </h1>
-          <p className="text-zinc-400 text-lg mb-8 max-w-md">
+          <p className="text-zinc-400 text-sm md:text-base max-w-md mb-6">
             Manage payroll, treasury and payments with complete privacy on Solana.
           </p>
-          <button className="px-6 py-3 rounded-full bg-yellow-500 text-black font-semibold hover:bg-yellow-400 transition">
+          <button className="px-5 py-2.5 rounded-full bg-yellow-500 text-black font-medium text-sm hover:bg-yellow-400">
             Create Treasury →
           </button>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {[
-          { label: "Team Members", value: "24", change: "+2" },
-          { label: "Payroll Batches", value: "12", change: "+1" },
-          { label: "Total Payments", value: "$••••••", change: "+28%" },
-          { label: "Privacy Preserved", value: "100%", change: "" },
+          { label: "Team Members", value: "24", sub: "+2" },
+          { label: "Payroll Batches", value: "12", sub: "+1" },
+          { label: "Total Payments", value: "$••••••", sub: "+28%" },
+          { label: "Privacy Score", value: "100%", sub: "Encrypted" },
         ].map((s) => (
-          <div key={s.label} className="p-5 rounded-2xl bg-zinc-950 border border-zinc-800">
-            <div className="text-2xl font-semibold">{s.value}</div>
-            <div className="text-sm text-zinc-500 mt-1">{s.label}</div>
-            {s.change && <div className="text-xs text-green-400 mt-2">↑ {s.change}</div>}
+          <div key={s.label} className="p-4 rounded-xl bg-zinc-950 border border-zinc-800">
+            <div className="text-[10px] text-zinc-500 uppercase tracking-wide">{s.label}</div>
+            <div className="text-xl md:text-2xl font-bold mt-1">{s.value}</div>
+            <div className="text-xs text-green-400 mt-1">{s.sub}</div>
           </div>
         ))}
       </div>
 
-      {/* Balance + Activity */}
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 p-6 rounded-2xl bg-zinc-950 border border-zinc-800">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-medium">Total Private Balance</h3>
-            <span className="text-xs text-zinc-500">1W</span>
-          </div>
-          <div className="text-4xl font-bold">$24,680.50</div>
-          <div className="text-sm text-green-400 mt-1">↑ +12.5% vs last week</div>
-          <div className="h-32 mt-6 bg-gradient-to-t from-yellow-500/10 to-transparent rounded-xl border border-yellow-900/20 flex items-end px-4 pb-2">
-            <div className="w-full h-1 bg-yellow-500/40 rounded-full relative">
-              <div className="absolute right-0 -top-1 w-2 h-2 bg-yellow-400 rounded-full" />
-            </div>
+      {/* Private Balance */}
+      <div className="p-6 rounded-2xl bg-zinc-950 border border-zinc-800 mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm text-zinc-500">Total Private Balance</div>
+          <div className="text-xs text-yellow-500 flex items-center gap-1">
+            <span>🔒</span> Encrypted
           </div>
         </div>
-
-        <div className="p-6 rounded-2xl bg-zinc-950 border border-zinc-800">
-          <h3 className="font-medium mb-4">Recent Activity</h3>
-          <div className="space-y-4 text-sm">
-            {[
-              { title: "Payroll Batch Sent", sub: "3 minutes ago • 24 members", amt: "+ $••••••" },
-              { title: "Payment Received", sub: "8 minutes ago • 0x7f…9a9e", amt: "+ $••••••" },
-              { title: "Treasury Deposit", sub: "12 minutes ago • 1.5 SOL", amt: "+ $••••••" },
-            ].map((a) => (
-              <div key={a.title} className="flex justify-between items-center">
-                <div>
-                  <div>{a.title}</div>
-                  <div className="text-xs text-zinc-500">{a.sub}</div>
-                </div>
-                <div className="text-green-400">{a.amt}</div>
-              </div>
-            ))}
+        <div className="text-3xl md:text-4xl font-bold">
+          {connected ? "$••••••" : "Connect wallet"}
+        </div>
+        {publicKey && (
+          <div className="text-xs text-zinc-500 mt-2">
+            Shielded address derived from {publicKey.toBase58().slice(0, 8)}…
           </div>
+        )}
+        <div className="flex gap-2 mt-4">
+          <button className="flex-1 py-2.5 rounded-xl bg-yellow-500 text-black text-sm font-medium">Deposit</button>
+          <button className="flex-1 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-sm">Withdraw</button>
+        </div>
+      </div>
+
+      {/* Recent Activity */}
+      <div>
+        <h3 className="text-sm font-medium text-zinc-400 mb-3">Recent Activity</h3>
+        <div className="space-y-2">
+          {[
+            { type: "Private Transfer", amount: "••••", time: "2h ago", status: "Confirmed" },
+            { type: "Payroll Batch", amount: "••••", time: "1d ago", status: "Confirmed" },
+            { type: "Deposit", amount: "••••", time: "3d ago", status: "Confirmed" },
+          ].map((tx, i) => (
+            <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+              <div>
+                <div className="text-sm">{tx.type}</div>
+                <div className="text-xs text-zinc-500">{tx.time}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-medium">{tx.amount}</div>
+                <div className="text-[10px] text-green-400">{tx.status}</div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -170,9 +231,9 @@ function DashboardView() {
 
 function SendView({ mode, setMode }: { mode: string; setMode: (m: any) => void }) {
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-md">
       <h2 className="text-2xl font-semibold mb-6">Send</h2>
-      <div className="flex gap-2 mb-8">
+      <div className="flex gap-2 mb-6 flex-wrap">
         {[
           { id: "single", label: "Send Payment" },
           { id: "batch", label: "Batch Payment" },
@@ -181,7 +242,7 @@ function SendView({ mode, setMode }: { mode: string; setMode: (m: any) => void }
           <button
             key={m.id}
             onClick={() => setMode(m.id)}
-            className={`px-5 py-2 rounded-full text-sm ${
+            className={`px-4 py-2 rounded-full text-sm ${
               mode === m.id ? "bg-yellow-500 text-black" : "bg-zinc-900 text-zinc-400"
             }`}
           >
@@ -192,14 +253,15 @@ function SendView({ mode, setMode }: { mode: string; setMode: (m: any) => void }
 
       {mode === "single" && (
         <div className="space-y-4">
-          <input placeholder="Recipient address" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm" />
-          <input placeholder="Amount (SOL or token)" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm" />
+          <input placeholder="Recipient address" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:border-yellow-500/50" />
+          <input placeholder="Amount (SOL)" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm outline-none focus:border-yellow-500/50" />
           <button className="w-full py-3 rounded-xl bg-yellow-500 text-black font-medium">Send Private Payment</button>
+          <p className="text-xs text-zinc-500 text-center">Amount encrypted via Helius Privacy Rings</p>
         </div>
       )}
 
       {mode === "batch" && (
-        <div className="text-zinc-400">Batch payment form — multiple recipients, one confidential flow.</div>
+        <div className="text-zinc-400 text-sm">Batch payment form — multiple recipients, one confidential flow.</div>
       )}
 
       {mode === "payroll" && (
@@ -215,9 +277,9 @@ function SendView({ mode, setMode }: { mode: string; setMode: (m: any) => void }
 
 function TreasuryView() {
   return (
-    <div>
+    <div className="max-w-md">
       <h2 className="text-2xl font-semibold mb-6">Treasury</h2>
-      <div className="p-8 rounded-2xl bg-zinc-950 border border-zinc-800 max-w-md">
+      <div className="p-6 rounded-2xl bg-zinc-950 border border-zinc-800">
         <div className="text-sm text-zinc-500">Private Balance</div>
         <div className="text-4xl font-bold mt-2">$••••••</div>
         <button className="mt-6 w-full py-3 rounded-xl bg-yellow-500 text-black font-medium">Deposit Funds</button>
@@ -230,16 +292,25 @@ function TransactionsView() {
   return (
     <div>
       <h2 className="text-2xl font-semibold mb-6">Transactions</h2>
-      <div className="text-zinc-500">Encrypted transaction history will appear here.</div>
+      <div className="text-zinc-500 text-sm">Encrypted transaction history will appear here once connected to Helius Privacy Rings.</div>
     </div>
   );
 }
 
 function SettingsView() {
   return (
-    <div>
+    <div className="max-w-md">
       <h2 className="text-2xl font-semibold mb-6">Settings</h2>
-      <div className="text-zinc-500">Network: Solana Devnet • Helius Privacy Rings</div>
+      <div className="space-y-3 text-sm">
+        <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800">
+          <div className="text-zinc-500">Network</div>
+          <div>Solana Devnet</div>
+        </div>
+        <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800">
+          <div className="text-zinc-500">Privacy Layer</div>
+          <div>Helius Privacy Rings</div>
+        </div>
+      </div>
     </div>
   );
 }
