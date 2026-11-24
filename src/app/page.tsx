@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { getZolanaClient, hasHeliusKey } from "@/lib/zolana";
 
 type Tab = "dashboard" | "send" | "treasury" | "transactions" | "settings";
 
@@ -67,6 +68,26 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [sendMode, setSendMode] = useState<"single" | "batch" | "payroll">("single");
   const [hideBalances, setHideBalances] = useState(true);
+  const [heliusReady, setHeliusReady] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  async function syncPrivate() {
+    if (!hasHeliusKey()) {
+      setSyncError("Helius API key missing");
+      return;
+    }
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      await getZolanaClient();
+      setHeliusReady(true);
+    } catch (e: any) {
+      setSyncError(e?.message || "Failed to connect to Helius Zolana");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const navItems = [
     { id: "dashboard" as const, label: "Home" },
@@ -116,6 +137,10 @@ export default function Home() {
               publicKey={publicKey}
               hideBalances={hideBalances}
               setHideBalances={setHideBalances}
+              heliusReady={heliusReady}
+              syncing={syncing}
+              syncError={syncError}
+              onSync={syncPrivate}
             />
           )}
           {activeTab === "send" && <SendView mode={sendMode} setMode={setSendMode} />}
@@ -162,11 +187,19 @@ function DashboardView({
   publicKey,
   hideBalances,
   setHideBalances,
+  heliusReady,
+  syncing,
+  syncError,
+  onSync,
 }: {
   connected: boolean;
   publicKey: any;
   hideBalances: boolean;
   setHideBalances: (v: boolean) => void;
+  heliusReady: boolean;
+  syncing: boolean;
+  syncError: string | null;
+  onSync: () => void;
 }) {
   const balanceDisplay = hideBalances ? "••••••" : connected ? "0.00" : "—";
 
@@ -223,8 +256,14 @@ function DashboardView({
           <div className="text-xs text-zinc-500 mt-1.5">Connect wallet to view private balance</div>
         )}
         <div className="flex gap-2.5 mt-5">
-          <button className="btn btn-primary flex-1 py-3 rounded-2xl">Deposit</button>
+          <button onClick={onSync} disabled={syncing} className="btn btn-primary flex-1 py-3 rounded-2xl">
+            {syncing ? "Syncing…" : heliusReady ? "Synced" : "Sync Private"}
+          </button>
           <button className="btn btn-ghost flex-1 py-3 rounded-2xl">Withdraw</button>
+        </div>
+        <div className="mt-3 text-[11px] text-zinc-500">
+          {hasHeliusKey() ? (heliusReady ? "Helius Zolana connected" : "Tap Sync to connect") : "Add NEXT_PUBLIC_HELIUS_API_KEY"}
+          {syncError ? <span className="text-red-400"> · {syncError}</span> : null}
         </div>
       </div>
 
