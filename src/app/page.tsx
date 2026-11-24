@@ -32,7 +32,7 @@ export default function Home() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div className="w-8 h-8 bg-gradient-to-br from-yellow-600 to-yellow-400 rounded-lg flex items-center justify-center font-bold text-black text-sm">V</div>
+          <div className="w-8 h-8 bg-yellow-500 rounded-lg flex items-center justify-center font-bold text-black text-sm">V</div>
           <div className="hidden sm:block">
             <div className="font-semibold tracking-wide text-sm">VEIL</div>
             <div className="text-[10px] text-zinc-500">Private Finance. Onchain.</div>
@@ -48,7 +48,7 @@ export default function Home() {
               {publicKey.toBase58().slice(0, 4)}…{publicKey.toBase58().slice(-4)}
             </span>
           )}
-          <WalletMultiButton className="!bg-yellow-500 !text-black !rounded-full !font-medium !text-xs !px-3 !py-1.5 hover:!bg-yellow-400" />
+          <WalletMultiButton style={{ background: "#eab308", color: "#000", borderRadius: "9999px", fontWeight: 500, fontSize: "12px", padding: "6px 12px" }} />
         </div>
       </header>
 
