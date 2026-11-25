@@ -25,6 +25,11 @@ export function useVeil() {
     if (spr.isUnlocked() && !(owner && spr.isUnlocked(owner))) spr.lock();
   }, [owner]);
 
+  // Start loading the heavy SDK as soon as a wallet connects.
+  useEffect(() => {
+    if (owner) spr.preload();
+  }, [owner]);
+
   const ready = owner !== null && unlockedFor === owner;
   const phase: Phase = ready ? "ready" : unlocking ? "unlocking" : "locked";
 

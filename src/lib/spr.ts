@@ -108,6 +108,14 @@ interface Session {
 
 let session: Session | null = null;
 
+/** Warms the SDK and Helius client so Unlock feels instant. Safe to call anytime. */
+export function preload(): void {
+  if (typeof window === "undefined") return;
+  void getSprClient().catch(() => undefined);
+  void import("@heliuslabs/spr").catch(() => undefined);
+  void import("@solana/kit").catch(() => undefined);
+}
+
 export function isUnlocked(owner?: string): boolean {
   return session !== null && (owner === undefined || session.owner === owner);
 }
@@ -159,15 +167,15 @@ export async function unlock(signer: WalletLike): Promise<Snapshot> {
   if (session && session.owner === owner) return syncNow(session);
   lock();
 
-  const [client, sdk, kit, { ed25519DerivationMessage }] = await Promise.all([
-    getSprClient(),
-    import("@heliuslabs/spr"),
-    import("@solana/kit"),
-    import("@heliuslabs/spr/keypair"),
-  ]);
-
+  // Ask the wallet FIRST, straight from the tap, so the prompt opens at once.
+  // (Wallets can delay or block a prompt that comes after slow async work.)
+  // The SDK and client keep loading in the background while the user approves.
+  const { ed25519DerivationMessage } = await import("@heliuslabs/spr/keypair");
   const message = ed25519DerivationMessage(signer.publicKey.toBytes() as Parameters<typeof ed25519DerivationMessage>[0]);
-  const derivationSeed = await signer.signMessage(message);
+  const signing = signer.signMessage(message);
+  const loading = Promise.all([getSprClient(), import("@heliuslabs/spr"), import("@solana/kit")]);
+  const [derivationSeed, [client, sdk, kit]] = await Promise.all([signing, loading]);
+
   const keys = sdk.LocalKeys.fromDerivationSeed(
     { solanaPublicKey: kit.address(owner), derivationSeed },
     client.proofService,
