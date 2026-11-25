@@ -1,11 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { getZolanaClient, hasHeliusKey } from "@/lib/zolana";
+import { WalletMultiButton, useWalletModal } from "@solana/wallet-adapter-react-ui";
+import Hero from "@/components/Hero";
+import { useAppConfig } from "@/components/Providers";
+import { NETWORK_LABEL } from "@/lib/config";
+import Sheet from "@/components/Sheet";
+import { formatSol, solToLamports, type HistoryItem } from "@/lib/spr";
+import { useVeil, type Veil } from "@/lib/use-veil";
 
 type Tab = "dashboard" | "send" | "treasury" | "transactions" | "settings";
+type SendMode = "single" | "batch" | "payroll";
 
 /* ---------- icons ---------- */
 function Icon({ children, className = "w-[22px] h-[22px]" }: { children: React.ReactNode; className?: string }) {
@@ -55,38 +60,30 @@ const icons = {
   ),
 };
 
-function LockIcon() {
-  return (
-    <Icon className="w-3.5 h-3.5">
-      <path d="M7 11V8a5 5 0 0 1 10 0v3M6 11h12v9H6z" />
-    </Icon>
-  );
-}
-
 export default function Home() {
-  const { publicKey, connected } = useWallet();
+  const { setVisible: openWalletModal } = useWalletModal();
+  const { heliusEnabled } = useAppConfig();
+  const veil = useVeil();
+  const { connected } = veil;
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
-  const [sendMode, setSendMode] = useState<"single" | "batch" | "payroll">("single");
+  const [sendMode, setSendMode] = useState<SendMode>("single");
   const [hideBalances, setHideBalances] = useState(true);
-  const [heliusReady, setHeliusReady] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<"deposit" | "withdraw" | null>(null);
 
-  async function syncPrivate() {
-    if (!hasHeliusKey()) {
-      setSyncError("Helius API key missing");
-      return;
-    }
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      await getZolanaClient();
-      setHeliusReady(true);
-    } catch (e: any) {
-      setSyncError(e?.message || "Failed to connect to Helius Zolana");
-    } finally {
-      setSyncing(false);
-    }
+  /** Connect -> unlock -> register, whichever step is next. */
+  async function createTreasury() {
+    if (!connected) return openWalletModal(true);
+    if (await veil.createTreasury()) setActiveTab("treasury");
+  }
+  function openSheet(kind: "deposit" | "withdraw") {
+    veil.clearError();
+    if (!connected) return openWalletModal(true);
+    if (!veil.ready) return void veil.unlock();
+    setSheet(kind);
+  }
+  function goSend(mode: "single" | "payroll") {
+    setSendMode(mode);
+    setActiveTab("send");
   }
 
   const navItems = [
@@ -112,7 +109,7 @@ export default function Home() {
         <div className="flex items-center gap-2">
           <div className="px-2.5 py-1 rounded-full bg-white/5 text-[10px] font-medium flex items-center gap-1.5 border border-white/10 text-zinc-300">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 dot-live" />
-            Devnet
+            {NETWORK_LABEL}
           </div>
           <WalletMultiButton
             style={{
@@ -133,22 +130,47 @@ export default function Home() {
         <div key={activeTab} className="view-enter">
           {activeTab === "dashboard" && (
             <DashboardView
-              connected={connected}
-              publicKey={publicKey}
+              veil={veil}
               hideBalances={hideBalances}
               setHideBalances={setHideBalances}
-              heliusReady={heliusReady}
-              syncing={syncing}
-              syncError={syncError}
-              onSync={syncPrivate}
+              heliusEnabled={heliusEnabled}
+              onCreate={createTreasury}
+              onSend={() => goSend("single")}
+              onPayroll={() => goSend("payroll")}
+              onTreasury={() => setActiveTab("treasury")}
+              onDeposit={() => openSheet("deposit")}
+              onWithdraw={() => openSheet("withdraw")}
+              onActivity={() => setActiveTab("transactions")}
             />
           )}
-          {activeTab === "send" && <SendView mode={sendMode} setMode={setSendMode} />}
-          {activeTab === "treasury" && <TreasuryView hideBalances={hideBalances} />}
-          {activeTab === "transactions" && <TransactionsView />}
-          {activeTab === "settings" && <SettingsView />}
+          {activeTab === "send" && <SendView veil={veil} mode={sendMode} setMode={setSendMode} />}
+          {activeTab === "treasury" && <TreasuryView veil={veil} hideBalances={hideBalances} onDeposit={() => openSheet("deposit")} />}
+          {activeTab === "transactions" && <TransactionsView history={veil.history} />}
+          {activeTab === "settings" && <SettingsView heliusEnabled={heliusEnabled} />}
         </div>
       </main>
+
+      <Sheet
+        open={sheet === "deposit"}
+        title="Deposit"
+        cta="Deposit to private balance"
+        note="The deposit amount is public on-chain. Everything after it can stay private."
+        busy={veil.busy !== null}
+        error={veil.error}
+        onClose={() => setSheet(null)}
+        onSubmit={(_, amount) => veil.deposit(amount)}
+      />
+      <Sheet
+        open={sheet === "withdraw"}
+        title="Withdraw"
+        cta="Withdraw"
+        address={{ label: "To address", initial: veil.owner ?? "" }}
+        note="Withdrawals are public on-chain: the destination and amount can be seen."
+        busy={veil.busy !== null}
+        error={veil.error}
+        onClose={() => setSheet(null)}
+        onSubmit={(to, amount) => veil.withdraw(to, amount)}
+      />
 
       {/* Bottom navbar */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 bg-black/65 backdrop-blur-2xl border-t border-white/10 safe-bottom">
@@ -182,95 +204,107 @@ export default function Home() {
   );
 }
 
+/* ---------- helpers ---------- */
+function balanceText(veil: Veil, hide: boolean) {
+  if (hide) return "••••••";
+  if (!veil.connected) return "—";
+  return veil.ready ? `${formatSol(veil.balance)} SOL` : "—";
+}
+
+function Status({ veil, heliusEnabled }: { veil: Veil; heliusEnabled: boolean }) {
+  if (veil.error) return <span className="text-red-400">{veil.error}</span>;
+  if (veil.busy) return <span className="text-yellow-400/80">{veil.busy}…</span>;
+  if (!heliusEnabled) return <>Helius not configured</>;
+  return <>{veil.ready ? "Private balance synced" : "Unlock to see your private balance"}</>;
+}
+
+/* ---------- views ---------- */
 function DashboardView({
-  connected,
-  publicKey,
+  veil,
   hideBalances,
   setHideBalances,
-  heliusReady,
-  syncing,
-  syncError,
-  onSync,
+  heliusEnabled,
+  onCreate,
+  onSend,
+  onPayroll,
+  onTreasury,
+  onDeposit,
+  onWithdraw,
+  onActivity,
 }: {
-  connected: boolean;
-  publicKey: any;
+  veil: Veil;
   hideBalances: boolean;
   setHideBalances: (v: boolean) => void;
-  heliusReady: boolean;
-  syncing: boolean;
-  syncError: string | null;
-  onSync: () => void;
+  heliusEnabled: boolean;
+  onCreate: () => void;
+  onSend: () => void;
+  onPayroll: () => void;
+  onTreasury: () => void;
+  onDeposit: () => void;
+  onWithdraw: () => void;
+  onActivity: () => void;
 }) {
-  const balanceDisplay = hideBalances ? "••••••" : connected ? "0.00" : "—";
+  const { connected, owner, ready, busy } = veil;
 
   return (
     <div className="space-y-4">
-      {/* Hero glass */}
-      <div className="card overflow-hidden p-6">
-        <div className="absolute inset-0 bg-[url('/hero-ring.jpg')] bg-cover bg-center opacity-15" />
-        <div className="absolute -top-24 -right-16 w-64 h-64 rounded-full bg-yellow-500/20 blur-3xl" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
-        <div className="relative">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 border border-white/10 text-xs font-medium text-yellow-400 mb-4">
-            <LockIcon /> Helius Privacy Rings
-          </div>
-          <h1 className="text-[1.9rem] font-semibold leading-[1.15] tracking-tight mb-2.5">
-            Your Business<br />Finances Shouldn’t<br />Be Public.
-          </h1>
-          <p className="text-zinc-400 text-sm leading-relaxed mb-6">
-            Private treasury and payments on Solana.
-          </p>
-          <button className="btn btn-primary px-5 py-3 rounded-full">Create Treasury</button>
-        </div>
-      </div>
+      <Hero onCreate={onCreate} onSend={onSend} onPayroll={onPayroll} onTreasury={onTreasury} />
 
       {/* Balance glass */}
       <div className="card p-5">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-zinc-400">Private Balance</span>
-          <button
-            onClick={() => setHideBalances(!hideBalances)}
-            className="icon-btn"
-            aria-label={hideBalances ? "Show balance" : "Hide balance"}
-            aria-pressed={!hideBalances}
-          >
-            {hideBalances ? (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
-            )}
+          <button onClick={() => setHideBalances(!hideBalances)} className="text-[11px] text-zinc-500 hover:text-zinc-300" aria-pressed={!hideBalances}>
+            {hideBalances ? "Show" : "Hide"}
           </button>
         </div>
-        <div className="num text-4xl font-semibold tracking-tight">{balanceDisplay}</div>
-        {connected && publicKey && (
+        <div className="num text-4xl font-semibold tracking-tight">{balanceText(veil, hideBalances)}</div>
+        {connected && owner && (
           <div className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-md bg-white/5 text-[11px] text-zinc-400 font-mono">
-            {publicKey.toBase58().slice(0, 6)}…{publicKey.toBase58().slice(-4)}
+            {owner.slice(0, 6)}…{owner.slice(-4)}
           </div>
         )}
-        {!connected && (
-          <div className="text-xs text-zinc-500 mt-1.5">Connect wallet to view private balance</div>
-        )}
+        {!connected && <div className="text-xs text-zinc-500 mt-1.5">Connect wallet to view private balance</div>}
+
         <div className="flex gap-2.5 mt-5">
-          <button onClick={onSync} disabled={syncing} className="btn btn-primary flex-1 py-3 rounded-2xl">
-            {syncing ? "Syncing…" : heliusReady ? "Synced" : "Sync Private"}
-          </button>
-          <button className="btn btn-ghost flex-1 py-3 rounded-2xl">Withdraw</button>
+          {ready ? (
+            <>
+              <button onClick={onDeposit} disabled={busy !== null} className="btn btn-primary flex-1 py-3 rounded-2xl">Deposit</button>
+              <button onClick={onWithdraw} disabled={busy !== null} className="btn btn-ghost flex-1 py-3 rounded-2xl">Withdraw</button>
+            </>
+          ) : (
+            <button onClick={connected ? () => void veil.unlock() : onCreate} disabled={busy !== null} className="btn btn-primary flex-1 py-3 rounded-2xl">
+              {busy ?? (connected ? "Unlock" : "Connect wallet")}
+            </button>
+          )}
         </div>
-        <div className="mt-3 text-[11px] text-zinc-500">
-          {hasHeliusKey() ? (heliusReady ? "Helius Zolana connected" : "Tap Sync to connect") : "Add NEXT_PUBLIC_HELIUS_API_KEY"}
-          {syncError ? <span className="text-red-400"> · {syncError}</span> : null}
+        <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
+          <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M7 11V8a5 5 0 0 1 9.5-2M6 11h12v9H6z" />
+          </svg>
+          Withdrawals are public on-chain
+        </div>
+        <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
+          <span><Status veil={veil} heliusEnabled={heliusEnabled} /></span>
+          {ready && (
+            <button onClick={() => void veil.refresh()} disabled={busy !== null} className="text-zinc-400 hover:text-white">Sync</button>
+          )}
         </div>
       </div>
 
-      {/* Empty activity */}
+      {/* Recent activity */}
       <div className="card p-5">
-        <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-zinc-400 mb-3">Recent Activity</div>
-        <EmptyState text="No private transactions yet" />
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-zinc-400">Recent Activity</span>
+          {veil.history.length > 3 && (
+            <button onClick={onActivity} className="text-[11px] text-zinc-400 hover:text-white">See all</button>
+          )}
+        </div>
+        {veil.history.length === 0 ? (
+          <EmptyState text="No private transactions yet" />
+        ) : (
+          <ActivityList items={veil.history.slice(0, 3)} />
+        )}
       </div>
     </div>
   );
@@ -289,21 +323,101 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-function SendView({ mode, setMode }: { mode: string; setMode: (m: any) => void }) {
+function describe(t: HistoryItem): { label: string; sign: "+" | "−" | ""; pub: boolean } {
+  switch (t.kind) {
+    case "deposit":
+      return { label: "Deposited", sign: "+", pub: true };
+    case "publicWithdrawal":
+      return { label: "Withdrawn", sign: "−", pub: true };
+    case "privateTransfer":
+      return t.direction === "inbound"
+        ? { label: "Received", sign: "+", pub: false }
+        : t.direction === "outbound"
+          ? { label: "Sent", sign: "−", pub: false }
+          : { label: "Moved", sign: "", pub: false };
+    default:
+      return { label: "Maintenance", sign: "", pub: false };
+  }
+}
+
+function ActivityList({ items }: { items: HistoryItem[] }) {
+  return (
+    <ul className="divide-y divide-white/[0.06]">
+      {items.map((t) => {
+        const d = describe(t);
+        return (
+          <li key={t.id} className="flex items-center justify-between py-3">
+            <div className="flex items-center gap-2.5">
+              <span className="text-sm font-medium">{d.label}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${d.pub ? "border-white/15 text-zinc-400" : "border-yellow-400/40 text-yellow-300"}`}>
+                {d.pub ? "public" : "private"}
+              </span>
+            </div>
+            <span className={`num text-sm ${d.sign === "+" ? "text-green-400" : "text-zinc-200"}`}>
+              {d.sign}{formatSol(t.amount)} SOL
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+type Row = { to: string; amount: string };
+
+function SendView({ veil, mode, setMode }: { veil: Veil; mode: SendMode; setMode: (m: SendMode) => void }) {
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [rows, setRows] = useState<Row[]>([{ to: "", amount: "" }]);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const busy = veil.busy !== null;
+
+  function guard(): boolean {
+    setDone(false);
+    setLocalError(null);
+    veil.clearError();
+    if (!veil.connected) { setLocalError("Connect your wallet first"); return false; }
+    if (!veil.ready) { void veil.unlock(); return false; }
+    return true;
+  }
+
+  async function sendOne() {
+    if (!guard()) return;
+    let lamports: bigint;
+    try { lamports = solToLamports(amount); } catch (e: unknown) { return setLocalError(e instanceof Error ? e.message : "Invalid amount"); }
+    if (to.trim() === "") return setLocalError("Enter a recipient");
+    if (await veil.send(to, lamports)) { setTo(""); setAmount(""); setDone(true); }
+  }
+
+  async function sendBatch() {
+    if (!guard()) return;
+    try {
+      const payments = rows.map((r) => ({ recipient: r.to, amount: solToLamports(r.amount) }));
+      if (payments.some((p) => p.recipient.trim() === "")) throw new Error("Fill in every address");
+      if (await veil.sendMany(payments)) { setRows([{ to: "", amount: "" }]); setDone(true); }
+    } catch (e: unknown) {
+      setLocalError(e instanceof Error ? e.message : "Check the amounts");
+    }
+  }
+
+  const setRow = (i: number, patch: Partial<Row>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const error = localError ?? veil.error;
+
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold tracking-tight">Send</h2>
       <div className="flex gap-2 flex-wrap" role="tablist">
-        {[
+        {([
           { id: "single", label: "Payment" },
           { id: "batch", label: "Batch" },
           { id: "payroll", label: "Payroll" },
-        ].map((m) => (
+        ] as const).map((m) => (
           <button
             key={m.id}
             role="tab"
             aria-selected={mode === m.id}
-            onClick={() => setMode(m.id)}
+            onClick={() => { setMode(m.id); setDone(false); setLocalError(null); }}
             className={`chip ${mode === m.id ? "chip-on" : "chip-off"}`}
           >
             {m.label}
@@ -316,62 +430,108 @@ function SendView({ mode, setMode }: { mode: string; setMode: (m: any) => void }
           <>
             <div>
               <label className="label" htmlFor="recipient">Recipient</label>
-              <input id="recipient" placeholder="Recipient address" autoComplete="off" spellCheck={false} className="field" />
+              <input id="recipient" value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient address" autoComplete="off" spellCheck={false} className="field font-mono text-xs" />
             </div>
             <div>
-              <label className="label" htmlFor="amount">Amount</label>
-              <input id="amount" placeholder="0.00" inputMode="decimal" autoComplete="off" className="field num" />
+              <label className="label" htmlFor="amount">Amount (SOL)</label>
+              <input id="amount" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" inputMode="decimal" autoComplete="off" className="field num" />
             </div>
-            <button className="btn btn-primary w-full py-3.5 rounded-2xl">Send Private</button>
+            <button onClick={sendOne} disabled={busy} className="btn btn-primary w-full py-3.5 rounded-2xl">
+              {veil.busy ?? "Send Private Payment"}
+            </button>
           </>
         )}
-        {mode === "batch" && (
-          <div className="text-sm text-zinc-500 text-center py-6">Batch payments coming soon</div>
+
+        {(mode === "batch" || mode === "payroll") && (
+          <>
+            {rows.map((r, i) => (
+              <div key={i} className="flex gap-2 items-start">
+                <input value={r.to} onChange={(e) => setRow(i, { to: e.target.value })} placeholder={mode === "payroll" ? "Employee address" : "Address"} aria-label={`Recipient ${i + 1}`} autoComplete="off" spellCheck={false} className="field font-mono text-xs flex-1 min-w-0" />
+                <input value={r.amount} onChange={(e) => setRow(i, { amount: e.target.value })} placeholder="0.00" aria-label={`Amount ${i + 1}`} inputMode="decimal" autoComplete="off" className="field num w-24" />
+                {rows.length > 1 && (
+                  <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} aria-label={`Remove recipient ${i + 1}`} className="btn btn-ghost px-3 rounded-xl self-stretch">×</button>
+                )}
+              </div>
+            ))}
+            {rows.length < 15 && (
+              <button onClick={() => setRows((rs) => [...rs, { to: "", amount: "" }])} className="text-xs text-yellow-400 hover:text-yellow-300">+ Add recipient</button>
+            )}
+            <button onClick={sendBatch} disabled={busy} className="btn btn-primary w-full py-3.5 rounded-2xl">
+              {veil.busy ?? (mode === "payroll" ? "Run Private Payroll" : "Send Batch")}
+            </button>
+            <p className="text-[11px] text-zinc-500">
+              Amounts are hidden. Recipient wallets are visible on-chain. Each recipient must have set up Veil.
+            </p>
+          </>
         )}
-        {mode === "payroll" && (
-          <div className="text-sm text-zinc-500 text-center py-6">Payroll is a side feature under Send</div>
-        )}
+
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        {done && !error && <p className="text-xs text-green-400">Sent privately</p>}
       </div>
     </div>
   );
 }
 
-function TreasuryView({ hideBalances }: { hideBalances: boolean }) {
+function TreasuryView({ veil, hideBalances, onDeposit }: { veil: Veil; hideBalances: boolean; onDeposit: () => void }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    if (!veil.owner) return;
+    try {
+      await navigator.clipboard.writeText(veil.owner);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked: the address is still shown */
+    }
+  }
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold tracking-tight">Treasury</h2>
       <div className="card p-6">
         <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-zinc-400">Private Balance</div>
-        <div className="num text-4xl font-semibold tracking-tight mt-1.5">{hideBalances ? "••••••" : "0.00"}</div>
-        <button className="btn btn-primary mt-6 w-full py-3.5 rounded-2xl">Deposit</button>
+        <div className="num text-4xl font-semibold tracking-tight mt-1.5">{balanceText(veil, hideBalances)}</div>
+        <button onClick={onDeposit} disabled={veil.busy !== null} className="btn btn-primary mt-6 w-full py-3.5 rounded-2xl">
+          {veil.ready ? "Deposit" : veil.connected ? "Unlock" : "Connect wallet"}
+        </button>
       </div>
+      {veil.owner && (
+        <div className="card p-5">
+          <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-zinc-400 mb-2">Your Veil address</div>
+          <button onClick={copy} className="w-full text-left font-mono text-xs break-all text-zinc-200">{veil.owner}</button>
+          <div className="text-[11px] text-zinc-500 mt-2">{copied ? "Copied" : "Tap to copy. Others pay you here once you've set up your treasury."}</div>
+        </div>
+      )}
     </div>
   );
 }
 
-function TransactionsView() {
+function TransactionsView({ history }: { history: HistoryItem[] }) {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold tracking-tight">Activity</h2>
-      <div className="card p-6">
-        <EmptyState text="No encrypted transactions yet" />
+      <div className="card p-5">
+        {history.length === 0 ? <EmptyState text="No encrypted transactions yet" /> : <ActivityList items={history} />}
       </div>
     </div>
   );
 }
 
-function SettingsView() {
+function SettingsView({ heliusEnabled }: { heliusEnabled: boolean }) {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold tracking-tight">Settings</h2>
       <div className="card px-5 text-sm divide-y divide-white/[0.06]">
         <div className="flex justify-between items-center py-4">
           <span className="text-zinc-400">Network</span>
-          <span className="font-medium">Solana Devnet</span>
+          <span className="font-medium">Solana {NETWORK_LABEL}</span>
         </div>
         <div className="flex justify-between items-center py-4">
           <span className="text-zinc-400">Privacy</span>
-          <span className="font-medium">Helius Zolana</span>
+          <span className="font-medium">Helius Privacy Rings</span>
+        </div>
+        <div className="flex justify-between items-center py-4">
+          <span className="text-zinc-400">RPC</span>
+          <span className="font-medium">{heliusEnabled ? "Helius" : "Public RPC"}</span>
         </div>
       </div>
     </div>
