@@ -368,7 +368,7 @@ async function signWithWallet(s: Session, tx: unknown) {
 /** Signs with the wallet app and sends. Returns the landing slot once indexed. */
 async function submit(s: Session, tx: unknown): Promise<bigint> {
   const { kit, client } = s;
-  const signedTx = await signWithWallet(s, tx);
+  const signedTx = await stage("signing", () => signWithWallet(s, tx));
 
   // v1 transactions carry no lifetimeConstraint after our re-encode, so the
   // kit's sendAndConfirm helper can't be used. Send raw bytes and poll instead.
@@ -379,7 +379,7 @@ async function submit(s: Session, tx: unknown): Promise<bigint> {
     };
   };
   const wireB64 = kit.getBase64EncodedWireTransaction(signedTx as never);
-  const sent = await rpc.sendTransaction(wireB64, { encoding: "base64", maxRetries: 5n }).send();
+  const sent = await stage("sending", () => rpc.sendTransaction(wireB64, { encoding: "base64", maxRetries: 5n }).send());
   const deadline = Date.now() + 60_000;
   for (;;) {
     const { value } = await rpc.getSignatureStatuses([sent]).send();
@@ -391,7 +391,7 @@ async function submit(s: Session, tx: unknown): Promise<bigint> {
   }
 
   const signature = kit.getSignatureFromTransaction(signedTx as never);
-  return client.confirmTransaction(signature);
+  return stage("confirming", () => client.confirmTransaction(signature));
 }
 
 function feePayer(s: Session) {
@@ -408,7 +408,7 @@ export async function register(): Promise<Snapshot> {
   });
   if (tx === undefined) return snapshot(s); // already registered
   const slot = await submit(s, tx);
-  return syncNow(s, slot);
+  return stage("syncing", () => syncNow(s, slot));
 }
 
 export async function refresh(): Promise<Snapshot> {
@@ -471,7 +471,20 @@ export async function withdraw(recipient: string, amount: bigint): Promise<Snaps
 }
 
 /** Turns SDK and wallet errors into one short, human sentence. */
+/** Tags a failure with the step it happened in, so a bare decoder error says where it came from. */
+async function stage<T>(name: string, job: () => Promise<T>): Promise<T> {
+  try {
+    return await job();
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("STAGE:")) throw e;
+    throw new Error(`STAGE:${name}`, { cause: e });
+  }
+}
+
 export function friendlyError(e: unknown): string {
+  if (e instanceof Error && e.message.startsWith("STAGE:")) {
+    return `${friendlyError(e.cause)} (while ${e.message.slice(6)})`;
+  }
   const o = (typeof e === "object" && e !== null ? e : {}) as {
     code?: unknown;
     causeCode?: unknown;

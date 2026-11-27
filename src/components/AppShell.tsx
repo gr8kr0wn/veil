@@ -68,7 +68,7 @@ export default function AppShell() {
         <Image src="/vault.webp" alt="" width={900} height={1023} className="vault-mask w-full h-auto" />
       </div>
 
-      <header className="sticky top-0 z-40 flex items-center justify-between px-5 md:px-10 py-4">
+      <header className="sticky top-0 z-40 flex items-center justify-between px-5 md:px-10 py-4 bg-[rgba(5,4,3,0.78)] backdrop-blur-xl">
         <Link href="/" className="wordmark text-base">VEIL</Link>
         <div className="flex items-center gap-2.5">
           <span className="hidden sm:flex items-center gap-2 text-xs text-dim"><span className="live-dot" />{NETWORK_LABEL}</span>
