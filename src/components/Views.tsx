@@ -25,7 +25,7 @@ function Status({ veil, heliusEnabled }: { veil: Veil; heliusEnabled: boolean })
 
 function Balance({ veil, hide, setHide, heliusEnabled }: { veil: Veil; hide: boolean; setHide: (v: boolean) => void; heliusEnabled: boolean }) {
   return (
-    <div className="relative pt-2 pb-8">
+    <div className="relative pt-2 pb-8 overflow-x-clip">
       <div className="pointer-events-none absolute -right-[22%] -top-10 w-[78%] md:hidden opacity-70">
         <Image src="/ring.webp" alt="" width={1100} height={1100} priority className="ring-mask drift w-full h-auto" />
       </div>

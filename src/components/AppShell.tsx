@@ -62,7 +62,7 @@ export default function AppShell() {
   const goSend = (m: SendMode) => { setSendMode(m); setTab("send"); };
 
   return (
-    <div className="relative isolate min-h-[100svh]">
+    <div className="relative isolate min-h-[100svh] overflow-x-clip">
       <div className="stage" />
       <div className="pointer-events-none fixed right-[-12%] top-[6svh] w-[46%] max-w-[700px] hidden md:block opacity-60">
         <Image src="/vault.webp" alt="" width={900} height={1023} className="vault-mask w-full h-auto" />
