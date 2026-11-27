@@ -232,11 +232,25 @@ async function submit(s: Session, tx: unknown): Promise<bigint> {
   const { kit, client } = s;
   const signedTx = await signWithWallet(s, tx);
 
-  const sendAndConfirm = kit.sendAndConfirmTransactionFactory({
-    rpc: client.solanaRpc,
-    rpcSubscriptions: client.solanaRpcSubscriptions,
-  } as never) as unknown as (t: unknown, c: { commitment: "confirmed" }) => Promise<void>;
-  await sendAndConfirm(signedTx, { commitment: "confirmed" });
+  // v1 transactions carry no lifetimeConstraint after our re-encode, so the
+  // kit's sendAndConfirm helper can't be used. Send raw bytes and poll instead.
+  const rpc = client.solanaRpc as unknown as {
+    sendTransaction: (w: string, o: object) => { send: () => Promise<string> };
+    getSignatureStatuses: (s: string[]) => {
+      send: () => Promise<{ value: Array<{ err: unknown; confirmationStatus?: string } | null> }>;
+    };
+  };
+  const wireB64 = kit.getBase64EncodedWireTransaction(signedTx as never);
+  const sent = await rpc.sendTransaction(wireB64, { encoding: "base64", maxRetries: 5n }).send();
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    const { value } = await rpc.getSignatureStatuses([sent]).send();
+    const st = value[0];
+    if (st?.err) throw new Error("Transaction failed on-chain");
+    if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) break;
+    if (Date.now() > deadline) throw new Error("Network is slow. Check Activity in a minute.");
+    await new Promise((r) => setTimeout(r, 1200));
+  }
 
   const signature = kit.getSignatureFromTransaction(signedTx as never);
   return client.confirmTransaction(signature);
@@ -324,6 +338,7 @@ export function friendlyError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   if (/User rejected|rejected the request|declined/i.test(msg)) return "Cancelled in your wallet";
   if (code.includes("RECIPIENT_NOT_REGISTERED")) return "They haven't set up Veil yet";
+  if (code === "-32002" || /#-32002|preflight|simulation failed|0x1\b/i.test(msg)) return "Not enough SOL for this and the network fee";
   if (code.includes("INSUFFICIENT") || /insufficient/i.test(msg)) return "Not enough private balance";
   if (code.includes("ATTESTATION") || /attest|policy/i.test(msg)) return "Couldn't verify the secure prover. Try again shortly.";
   if (/not a valid|invalid address|Invalid base58|address/i.test(msg) && /valid|invalid/i.test(msg)) return "That address doesn't look right";
