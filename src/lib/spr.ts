@@ -104,7 +104,11 @@ interface Session {
   kit: Kit;
   wallet: InstanceType<Sdk["Wallet"]>;
   keys: ReturnType<Sdk["LocalKeys"]["fromDerivationSeed"]>;
+  mode: UnlockMode;
 }
+
+/** "standard" signs the SDK's own message. "text" signs readable text, for wallets that block or alter it. */
+export type UnlockMode = "standard" | "text";
 
 let session: Session | null = null;
 
@@ -190,6 +194,103 @@ async function diagnoseSignature(kit: Kit, owner: string, sig: Uint8Array, messa
  * stored) and syncs. The same wallet always derives the same keys.
  */
 export async function unlock(signer: WalletLike): Promise<Snapshot> {
+  const owner = signer.publicKey.toBase58();
+  if (session && session.owner === owner) return syncNow(session);
+  // A wallet that once needed the readable-text unlock keeps using it, so the
+  // same wallet always opens the same vault.
+  if (savedMode(owner) === "text") return unlockText(signer);
+  try {
+    return await unlockStandard(signer);
+  } catch (e) {
+    if (!walletBlocksStandard(e)) throw e;
+    return unlockText(signer);
+  }
+}
+
+function modeKey(owner: string): string {
+  return `veil:unlock-mode:${owner}`;
+}
+
+function savedMode(owner: string): UnlockMode | null {
+  try {
+    return localStorage.getItem(modeKey(owner)) === "text" ? "text" : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Phantom (mobile) rejects the SDK's binary message; some wallets rewrite it. */
+function walletBlocksStandard(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /cannot sign solana transactions|WALLET_ALTERS_MESSAGE|unsupported message|not supported/i.test(msg);
+}
+
+export function currentMode(): UnlockMode | null {
+  return session?.mode ?? null;
+}
+
+async function hkdf32(secret: Uint8Array, info: string, length: number): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", secret as BufferSource, "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt: enc.encode("veil/text-unlock/v1") as BufferSource, info: enc.encode(info) as BufferSource },
+    key,
+    length * 8,
+  );
+  return new Uint8Array(bits);
+}
+
+/**
+ * For wallets that refuse the SDK's binary message (Phantom on phones). The
+ * wallet signs one readable line instead; the viewing and nullifier keys are
+ * derived from that signature. Spending is still authorised by the wallet's
+ * own transaction signature, exactly as in the standard path. This gives a
+ * different vault from the standard unlock, which is why the mode is remembered.
+ */
+async function unlockText(signer: WalletLike): Promise<Snapshot> {
+  if (!signer.signMessage) throw new Error("This wallet can't sign messages. Try Phantom or Solflare.");
+  const owner = signer.publicKey.toBase58();
+  lock();
+
+  const text = `Unlock Veil\n\nSign to open your private vault. No transaction, no fee.\n\nWallet: ${owner}\nVault key v1`;
+  const signing = signer.signMessage(new TextEncoder().encode(text));
+  const loading = Promise.all([
+    getSprClient(),
+    import("@heliuslabs/spr"),
+    import("@heliuslabs/spr/keypair"),
+    import("@solana/kit"),
+  ]);
+  const [signature, [client, sdk, kp, kit]] = await Promise.all([signing, loading]);
+  if (signature.length !== 64) throw new Error("Your wallet returned an unexpected signature. Try again.");
+
+  const viewing = kp.ViewingKey.fromBytes((await hkdf32(signature, "viewing", 32)) as never);
+  const nullifier = kp.NullifierKey.fromSecret((await hkdf32(signature, "nullifier", 31)) as never);
+  let keys: ReturnType<typeof sdk.LocalKeys.fromKeys>;
+  try {
+    const address = kp.ShieldedAddress.fromPublicKeys(
+      kp.ShieldedPublicKey.fromEd25519(signer.publicKey.toBytes() as never),
+      nullifier.publicKey(),
+      viewing.publicKey(),
+    );
+    keys = sdk.LocalKeys.fromKeys({ address, viewingKeys: [viewing], nullifierKey: nullifier }, client.proofService);
+  } finally {
+    viewing.destroy();
+    nullifier.destroy();
+  }
+  const wallet = new sdk.Wallet({ identity: keys.address() });
+
+  const next: Session = { owner, signer, client, sdk, kit, wallet, keys, mode: "text" };
+  const snap = await syncNow(next);
+  session = next;
+  try {
+    localStorage.setItem(modeKey(owner), "text");
+  } catch {
+    /* private mode: it falls back to trying standard first next time */
+  }
+  return snap;
+}
+
+async function unlockStandard(signer: WalletLike): Promise<Snapshot> {
   if (!signer.signMessage) throw new Error("This wallet can't sign messages. Try Phantom or Solflare.");
   const owner = signer.publicKey.toBase58();
   if (session && session.owner === owner) return syncNow(session);
@@ -219,7 +320,7 @@ export async function unlock(signer: WalletLike): Promise<Snapshot> {
   }
   const wallet = new sdk.Wallet({ identity: keys.address() });
 
-  const next: Session = { owner, signer, client, sdk, kit, wallet, keys };
+  const next: Session = { owner, signer, client, sdk, kit, wallet, keys, mode: "standard" };
   const snap = await syncNow(next);
   session = next;
   return snap;
@@ -384,6 +485,9 @@ export function friendlyError(e: unknown): string {
   if (/User rejected|rejected the request|declined/i.test(msg)) return "Cancelled in your wallet";
   if (msg.startsWith("WALLET_ALTERS_MESSAGE")) {
     return `Your wallet changed the message before signing (${msg.split(":")[1] ?? "unknown"}). Try Phantom or Solflare.`;
+  }
+  if (codes.includes("USER_RECORD_KEYS_MISMATCH")) {
+    return "This wallet was set up with a different unlock. Unlock the way you did before.";
   }
   if (codes.includes("RECIPIENT_NOT_REGISTERED") || codes.includes("USER_REGISTRY_RECORD_NOT_FOUND")) {
     return "They haven't set up Veil yet";
