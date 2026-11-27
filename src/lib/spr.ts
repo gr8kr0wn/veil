@@ -158,6 +158,34 @@ async function syncNow(s: Session, requireSlot?: bigint): Promise<Snapshot> {
 }
 
 /**
+ * Some wallets re-encode the message before signing, so the signature is valid
+ * but over different bytes. Work out which variant they signed so the error is
+ * specific and we can support that wallet properly.
+ */
+async function diagnoseSignature(kit: Kit, owner: string, sig: Uint8Array, message: Uint8Array): Promise<string> {
+  if (sig.length !== 64) return `signature-length-${sig.length}`;
+  try {
+    const key = await kit.getPublicKeyFromAddress(kit.address(owner));
+    const enc = new TextEncoder();
+    const asText = new TextDecoder().decode(message);
+    const b64 = btoa(String.fromCharCode(...message));
+    const hex = Array.from(message, (b) => b.toString(16).padStart(2, "0")).join("");
+    const variants: Array<[string, Uint8Array]> = [
+      ["utf8-roundtrip", enc.encode(asText)],
+      ["base64-text", enc.encode(b64)],
+      ["hex-text", enc.encode(hex)],
+      ["payload-only", enc.encode("TSPP/derive/v1")],
+    ];
+    for (const [name, bytes] of variants) {
+      if (await kit.verifySignature(key, kit.signatureBytes(sig), bytes as never)) return name;
+    }
+  } catch {
+    /* WebCrypto Ed25519 may be unavailable; fall through */
+  }
+  return "other";
+}
+
+/**
  * Derives the private keys from one wallet signature (no seed phrase, nothing
  * stored) and syncs. The same wallet always derives the same keys.
  */
@@ -176,10 +204,19 @@ export async function unlock(signer: WalletLike): Promise<Snapshot> {
   const loading = Promise.all([getSprClient(), import("@heliuslabs/spr"), import("@solana/kit")]);
   const [derivationSeed, [client, sdk, kit]] = await Promise.all([signing, loading]);
 
-  const keys = sdk.LocalKeys.fromDerivationSeed(
-    { solanaPublicKey: kit.address(owner), derivationSeed },
-    client.proofService,
-  );
+  let keys: ReturnType<typeof sdk.LocalKeys.fromDerivationSeed>;
+  try {
+    keys = sdk.LocalKeys.fromDerivationSeed(
+      { solanaPublicKey: kit.address(owner), derivationSeed },
+      client.proofService,
+    );
+  } catch (e) {
+    const code = (e as { code?: string; causeCode?: string })?.code ?? "";
+    if (/DERIVATION_SEED/.test(code)) {
+      throw new Error(`WALLET_ALTERS_MESSAGE:${await diagnoseSignature(kit, owner, derivationSeed, message)}`);
+    }
+    throw e;
+  }
   const wallet = new sdk.Wallet({ identity: keys.address() });
 
   const next: Session = { owner, signer, client, sdk, kit, wallet, keys };
@@ -345,6 +382,9 @@ export function friendlyError(e: unknown): string {
     .join(" ");
   const msg = e instanceof Error ? e.message : String(e);
   if (/User rejected|rejected the request|declined/i.test(msg)) return "Cancelled in your wallet";
+  if (msg.startsWith("WALLET_ALTERS_MESSAGE")) {
+    return `Your wallet changed the message before signing (${msg.split(":")[1] ?? "unknown"}). Try Phantom or Solflare.`;
+  }
   if (codes.includes("RECIPIENT_NOT_REGISTERED") || codes.includes("USER_REGISTRY_RECORD_NOT_FOUND")) {
     return "They haven't set up Veil yet";
   }
