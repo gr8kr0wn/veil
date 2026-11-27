@@ -334,13 +334,32 @@ export async function withdraw(recipient: string, amount: bigint): Promise<Snaps
 
 /** Turns SDK and wallet errors into one short, human sentence. */
 export function friendlyError(e: unknown): string {
-  const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
+  const o = (typeof e === "object" && e !== null ? e : {}) as {
+    code?: unknown;
+    causeCode?: unknown;
+    causeCodes?: unknown;
+  };
+  // The SDK wraps the real reason: code=WALLET_BUILD_TRANSFER, causeCode=WALLET_RECIPIENT_NOT_REGISTERED.
+  const codes = [o.code, o.causeCode, ...(Array.isArray(o.causeCodes) ? o.causeCodes : [])]
+    .filter((c): c is string => typeof c === "string")
+    .join(" ");
   const msg = e instanceof Error ? e.message : String(e);
   if (/User rejected|rejected the request|declined/i.test(msg)) return "Cancelled in your wallet";
-  if (code.includes("RECIPIENT_NOT_REGISTERED")) return "They haven't set up Veil yet";
-  if (code === "-32002" || /#-32002|preflight|simulation failed|0x1\b/i.test(msg)) return "Not enough SOL for this and the network fee";
-  if (code.includes("INSUFFICIENT") || /insufficient/i.test(msg)) return "Not enough private balance";
-  if (code.includes("ATTESTATION") || /attest|policy/i.test(msg)) return "Couldn't verify the secure prover. Try again shortly.";
-  if (/not a valid|invalid address|Invalid base58|address/i.test(msg) && /valid|invalid/i.test(msg)) return "That address doesn't look right";
+  if (codes.includes("RECIPIENT_NOT_REGISTERED") || codes.includes("USER_REGISTRY_RECORD_NOT_FOUND")) {
+    return "They haven't set up Veil yet";
+  }
+  if (codes.includes("INSUFFICIENT_BALANCE")) return "Not enough private balance";
+  if (codes.includes("TOO_MANY_INPUTS")) return "Too many small deposits. Try a smaller amount.";
+  if (codes.includes("INVALID_ADDRESS")) return "That address doesn't look right";
+  if (codes.includes("ATTESTATION") || /attest|policy/i.test(msg)) return "Couldn't verify the secure prover. Try again shortly.";
+  if (code2(o.code) === "-32002" || /#-32002|preflight|simulation failed|0x1\b/i.test(msg)) return "Not enough SOL for this and the network fee";
+  if (/insufficient/i.test(msg)) return "Not enough private balance";
+  if (/not a valid|invalid address|Invalid base58/i.test(msg)) return "That address doesn't look right";
+  // Unknown: show the SDK codes so failures are diagnosable instead of a bare wrapper name.
+  if (codes) return codes.replace(/WALLET_/g, "").trim().split(/\s+/).slice(0, 3).join(" · ");
   return msg.length > 140 ? `${msg.slice(0, 137)}…` : msg;
+}
+
+function code2(c: unknown) {
+  return typeof c === "string" || typeof c === "number" ? String(c) : "";
 }
